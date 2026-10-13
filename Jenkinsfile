@@ -81,6 +81,24 @@ pipeline {
                 '''
             }
         }
+
+        stage('Automated Tests') {
+            steps {
+                sh '''
+                    set -eu
+
+                    docker run --rm \
+                        -e SECRET_KEY=ci-only-placeholder-not-for-production \
+                        -e DEBUG=False \
+                        -e ALLOWED_HOSTS=localhost,127.0.0.1 \
+                        -e DB_ENGINE=sqlite \
+                        -e DB_NAME=/tmp/ci.sqlite3 \
+                        bugtracker-ci:${BUILD_NUMBER} \
+                        python manage.py test -v 2
+                '''
+            }
+        }
+
     }
 
     post {
