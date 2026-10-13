@@ -1,0 +1,44 @@
+
+services:
+  web:
+    image: bugtracker:dev
+    build:
+      context: ../bugtracker
+      dockerfile: ../bugtracker-devops/docker/Dockerfile
+
+    container_name: bugtracker-local
+
+    ports:
+      - "127.0.0.1:8000:8000"
+
+    env_file:
+      - ../bugtracker/.env
+
+    environment:
+      DB_ENGINE: sqlite
+      DB_NAME: /data/db.sqlite3
+      ALLOWED_HOSTS: "localhost,127.0.0.1"
+
+    volumes:
+      - bugtracker-sqlite-data:/data
+      - bugtracker-media-data:/app/media
+
+    command:
+      - sh
+      - -c
+      - >-
+        python manage.py migrate &&
+        gunicorn config.wsgi:application
+        --bind 0.0.0.0:8000
+        --workers 2
+        --access-logfile -
+        --error-logfile -
+
+    restart: unless-stopped
+
+volumes:
+  bugtracker-sqlite-data:
+    external: true
+
+  bugtracker-media-data:
+    name: bugtracker-media-data

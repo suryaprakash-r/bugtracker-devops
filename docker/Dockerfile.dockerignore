@@ -1,0 +1,45 @@
+
+# Git metadata
+.git/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Environment files and secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local database and uploaded user data
+db.sqlite3
+**/db.sqlite3
+media/
+**/media/
+
+# Python-generated files
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Generated static files
+staticfiles/
+**/staticfiles/
+
+# Testing and local tooling artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
+
+# IDE and operating system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
