@@ -99,11 +99,32 @@ pipeline {
             }
         }
 
+        stage('Trivy Container Scan') {
+            steps {
+                sh '''
+                    set -eu
+
+                    echo "Scanning bugtracker-ci:${BUILD_NUMBER} with Trivy..."
+
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v trivy-cache:/root/.cache/ \
+                        aquasec/trivy:0.75.0 \
+                        image \
+                        --scanners vuln \
+                        --format table \
+                        --exit-code 0 \
+                        bugtracker-ci:${BUILD_NUMBER}
+                '''
+            }
+        }
+
+
     }
 
     post {
         success {
-            echo 'SUCCESS: BugTracker image built and Django system check passed.'
+            echo 'SUCCESS: BugTracker image built, Django checks and tests passed, and Trivy scan completed.'
         }
 
         failure {
