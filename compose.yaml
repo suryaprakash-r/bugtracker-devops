@@ -36,9 +36,64 @@ services:
 
     restart: unless-stopped
 
+  
+  jenkins:
+    build:
+      context: ./jenkins
+      dockerfile: Dockerfile
+    image: bugtracker-jenkins:local
+    container_name: bugtracker-jenkins
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      DOCKER_HOST: "tcp://docker:2376"
+      DOCKER_CERT_PATH: "/certs/client"
+      DOCKER_TLS_VERIFY: "1"
+    volumes:
+      - jenkins-home:/var/jenkins_home
+      - docker-certs-client:/certs/client:ro
+    depends_on:
+      docker:
+        condition: service_started
+    networks:
+      - jenkins-ci
+
+  docker:
+    image: docker:29.8.2-dind
+    container_name: bugtracker-docker
+    privileged: true
+    restart: unless-stopped
+    environment:
+      DOCKER_TLS_CERTDIR: /certs
+    volumes:
+      - docker-certs-ca:/certs/ca
+      - docker-certs-client:/certs/client
+      - jenkins-docker-data:/var/lib/docker
+    networks:
+      - jenkins-ci
+
+
+networks:
+  jenkins-ci:
+    driver: bridge
+
 volumes:
   bugtracker-sqlite-data:
     external: true
 
   bugtracker-media-data:
     name: bugtracker-media-data
+
+  jenkins-home:
+    name: jenkins-home
+
+  docker-certs-ca:
+    name: docker-certs-ca
+
+  docker-certs-client:
+    name: docker-certs-client
+
+  jenkins-docker-data:
+    name: jenkins-docker-data
+
