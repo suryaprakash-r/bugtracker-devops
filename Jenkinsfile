@@ -146,12 +146,154 @@ pipeline {
             }
         }
 
+        stage('Deploy to Amazon EKS') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'aws-eks-deployer',
+                    usernameVariable: 'AWS_ACCESS_KEY_ID',
+                    passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                )]) {
+                    sh '''#!/usr/bin/env bash
+                        set +x
+                        set -euo pipefail
+                        umask 077
 
+                        AWS_REGION="ap-south-1"
+                        CLUSTER_NAME="bugtracker-eks"
+                        NAMESPACE="webapps"
+                        DEPLOYMENT_NAME="bugtracker"
+                        CONTAINER_NAME="bugtracker"
+                        ECR_IMAGE="626209129961.dkr.ecr.ap-south-1.amazonaws.com/bugtracker:build-${BUILD_NUMBER}"
+                        AWS_CLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:2.39.0"
+                        KUBECTL_VERSION="v1.37.1"
+
+                        TMP_DIR="$(mktemp -d)"
+                        trap 'rm -rf "$TMP_DIR"' EXIT
+
+                        case "$(uname -m)" in
+                            x86_64|amd64) KUBECTL_ARCH="amd64" ;;
+                            aarch64|arm64) KUBECTL_ARCH="arm64" ;;
+                            *)
+                                echo "Unsupported agent architecture." >&2
+                                exit 1
+                                ;;
+                        esac
+
+                        echo "Downloading and verifying kubectl..."
+                        KUBECTL_URL="https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${KUBECTL_ARCH}/kubectl"
+
+                        curl -fsSLo "$TMP_DIR/kubectl" "$KUBECTL_URL"
+                        curl -fsSLo "$TMP_DIR/kubectl.sha256" "${KUBECTL_URL}.sha256"
+
+                        printf '%s  %s\n' \
+                            "$(cat "$TMP_DIR/kubectl.sha256")" \
+                            "$TMP_DIR/kubectl" \
+                            | sha256sum --check --status
+
+                        chmod 0755 "$TMP_DIR/kubectl"
+                        KUBECTL="$TMP_DIR/kubectl"
+
+                        echo "Retrieving the EKS cluster endpoint..."
+                        EKS_ENDPOINT="$(docker run --rm \
+                            -e AWS_ACCESS_KEY_ID \
+                            -e AWS_SECRET_ACCESS_KEY \
+                            -e AWS_DEFAULT_REGION="$AWS_REGION" \
+                            "$AWS_CLI_IMAGE" \
+                            eks describe-cluster \
+                            --name "$CLUSTER_NAME" \
+                            --region "$AWS_REGION" \
+                            --query 'cluster.endpoint' \
+                            --output text)"
+
+                        EKS_CA_DATA="$(docker run --rm \
+                            -e AWS_ACCESS_KEY_ID \
+                            -e AWS_SECRET_ACCESS_KEY \
+                            -e AWS_DEFAULT_REGION="$AWS_REGION" \
+                            "$AWS_CLI_IMAGE" \
+                            eks describe-cluster \
+                            --name "$CLUSTER_NAME" \
+                            --region "$AWS_REGION" \
+                            --query 'cluster.certificateAuthority.data' \
+                            --output text)"
+
+                        echo "Generating temporary EKS authentication token..."
+                        EKS_TOKEN="$(docker run --rm \
+                            -e AWS_ACCESS_KEY_ID \
+                            -e AWS_SECRET_ACCESS_KEY \
+                            -e AWS_DEFAULT_REGION="$AWS_REGION" \
+                            "$AWS_CLI_IMAGE" \
+                            eks get-token \
+                            --cluster-name "$CLUSTER_NAME" \
+                            --region "$AWS_REGION" \
+                            --query 'status.token' \
+                            --output text)"
+
+                        if [ -z "$EKS_ENDPOINT" ] || \
+                           [ -z "$EKS_CA_DATA" ] || \
+                           [ -z "$EKS_TOKEN" ]; then
+                            echo "Failed to obtain EKS connection details." >&2
+                            exit 1
+                        fi
+
+                        cat > "$TMP_DIR/kubeconfig" <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+- name: ${CLUSTER_NAME}
+  cluster:
+    server: ${EKS_ENDPOINT}
+    certificate-authority-data: ${EKS_CA_DATA}
+contexts:
+- name: ${CLUSTER_NAME}
+  context:
+    cluster: ${CLUSTER_NAME}
+    namespace: ${NAMESPACE}
+    user: jenkins-eks-deployer
+current-context: ${CLUSTER_NAME}
+users:
+- name: jenkins-eks-deployer
+  user:
+    token: ${EKS_TOKEN}
+EOF
+
+                        chmod 0600 "$TMP_DIR/kubeconfig"
+                        export KUBECONFIG="$TMP_DIR/kubeconfig"
+
+                        echo "Checking access to the existing deployment..."
+                        "$KUBECTL" get deployment "$DEPLOYMENT_NAME" \
+                            --namespace "$NAMESPACE"
+
+                        echo "Deploying image: $ECR_IMAGE"
+                        "$KUBECTL" set image \
+                            "deployment/${DEPLOYMENT_NAME}" \
+                            "${CONTAINER_NAME}=${ECR_IMAGE}" \
+                            --namespace "$NAMESPACE"
+
+                        echo "Waiting for the Kubernetes rollout..."
+                        "$KUBECTL" rollout status \
+                            "deployment/${DEPLOYMENT_NAME}" \
+                            --namespace "$NAMESPACE" \
+                            --timeout=180s
+
+                        echo "Verifying the final deployment..."
+                        "$KUBECTL" get deployment "$DEPLOYMENT_NAME" \
+                            --namespace "$NAMESPACE" \
+                            --output wide
+
+                        "$KUBECTL" get pods \
+                            --namespace "$NAMESPACE" \
+                            --selector app=bugtracker
+
+                        echo "EKS deployment completed successfully."
+                    '''
+                }
+            }
+        }
     }
 
     post {
         success {
-            echo 'SUCCESS: BugTracker image built, Django checks and tests passed, and image pushed to Amazon ECR.'
+            echo 'SUCCESS: BugTracker built, tested, pushed to Amazon ECR, and deployed successfully to Amazon EKS.'
         }
 
         failure {
