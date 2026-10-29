@@ -179,36 +179,78 @@ pipeline {
                                 ;;
                         esac
 
-                        echo "Downloading and verifying kubectl..."
                         KUBECTL_URL="https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${KUBECTL_ARCH}/kubectl"
 
-                        echo "Downloading kubectl binary..."
-                        curl --fail --location --show-error --progress-bar \
-                            --connect-timeout 15 \
-                            --max-time 180 \
-                            --retry 2 \
-                            --retry-delay 5 \
-                            --output "$TMP_DIR/kubectl" \
-                            "$KUBECTL_URL"
+                        # Persistent cache: survives normal Jenkins build cleanup.
+                        KUBECTL_CACHE_DIR="${HOME}/.cache/bugtracker-ci/kubectl/${KUBECTL_VERSION}/${KUBECTL_ARCH}"
+                        CACHED_KUBECTL="${KUBECTL_CACHE_DIR}/kubectl"
+                        KUBECTL=""
 
-                        echo "Downloading kubectl checksum..."
-                        curl --fail --silent --show-error --location \
-                            --connect-timeout 15 \
-                            --max-time 30 \
-                            --retry 2 \
-                            --retry-delay 5 \
-                            --output "$TMP_DIR/kubectl.sha256" \
-                            "${KUBECTL_URL}.sha256"
+                        # 1. Reuse the system-installed binary if the version matches.
+                        if command -v kubectl >/dev/null 2>&1; then
+                            SYSTEM_KUBECTL="$(command -v kubectl)"
+                            SYSTEM_VERSION="$("$SYSTEM_KUBECTL" version \
+                                --client --output=yaml 2>/dev/null \
+                                | awk '/gitVersion:/ {print $2; exit}' || true)"
 
-                        echo "Verifying kubectl checksum..."
+                            if [ "$SYSTEM_VERSION" = "$KUBECTL_VERSION" ]; then
+                                KUBECTL="$SYSTEM_KUBECTL"
+                                echo "Using system kubectl: $SYSTEM_VERSION"
+                            fi
+                        fi
 
-                        printf '%s  %s\n' \
-                            "$(cat "$TMP_DIR/kubectl.sha256")" \
-                            "$TMP_DIR/kubectl" \
-                            | sha256sum --check --status
+                        # 2. Otherwise, reuse the persistent cached binary.
+                        if [ -z "$KUBECTL" ] && [ -x "$CACHED_KUBECTL" ]; then
+                            CACHED_VERSION="$("$CACHED_KUBECTL" version \
+                                --client --output=yaml 2>/dev/null \
+                                | awk '/gitVersion:/ {print $2; exit}' || true)"
 
-                        chmod 0755 "$TMP_DIR/kubectl"
-                        KUBECTL="$TMP_DIR/kubectl"
+                            if [ "$CACHED_VERSION" = "$KUBECTL_VERSION" ]; then
+                                KUBECTL="$CACHED_KUBECTL"
+                                echo "Using cached kubectl: $CACHED_VERSION"
+                            else
+                                echo "Cached kubectl is missing or has an unexpected version."
+                                rm -f "$CACHED_KUBECTL"
+                            fi
+                        fi
+
+                        # 3. Download only when neither existing binary is suitable.
+                        if [ -z "$KUBECTL" ]; then
+                            echo "No matching kubectl found. Downloading $KUBECTL_VERSION..."
+                            mkdir -p "$KUBECTL_CACHE_DIR"
+
+                            curl --fail --location --show-error --progress-bar \
+                                --connect-timeout 15 \
+                                --max-time 120 \
+                                --retry 1 \
+                                --retry-delay 3 \
+                                --output "$TMP_DIR/kubectl" \
+                                "$KUBECTL_URL"
+
+                            curl --fail --silent --show-error --location \
+                                --connect-timeout 15 \
+                                --max-time 30 \
+                                --retry 1 \
+                                --retry-delay 3 \
+                                --output "$TMP_DIR/kubectl.sha256" \
+                                "${KUBECTL_URL}.sha256"
+
+                            echo "Verifying downloaded kubectl checksum..."
+                            printf '%s  %s\n' \
+                                "$(tr -d '[:space:]' < "$TMP_DIR/kubectl.sha256")" \
+                                "$TMP_DIR/kubectl" \
+                                | sha256sum --check --status
+
+                            # Cache the verified binary outside TMP_DIR.
+                            cp "$TMP_DIR/kubectl" "$CACHED_KUBECTL"
+                            chmod 0755 "$CACHED_KUBECTL"
+                            KUBECTL="$CACHED_KUBECTL"
+
+                            echo "kubectl verified and cached."
+                        fi
+
+                        echo "Selected kubectl client:"
+                        "$KUBECTL" version --client
 
                         echo "Retrieving the EKS cluster endpoint..."
                         EKS_ENDPOINT="$(docker run --rm \
