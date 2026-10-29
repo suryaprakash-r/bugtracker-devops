@@ -182,8 +182,25 @@ pipeline {
                         echo "Downloading and verifying kubectl..."
                         KUBECTL_URL="https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${KUBECTL_ARCH}/kubectl"
 
-                        curl -fsSLo "$TMP_DIR/kubectl" "$KUBECTL_URL"
-                        curl -fsSLo "$TMP_DIR/kubectl.sha256" "${KUBECTL_URL}.sha256"
+                        echo "Downloading kubectl binary..."
+                        curl --fail --location --show-error --progress-bar \
+                            --connect-timeout 15 \
+                            --max-time 180 \
+                            --retry 2 \
+                            --retry-delay 5 \
+                            --output "$TMP_DIR/kubectl" \
+                            "$KUBECTL_URL"
+
+                        echo "Downloading kubectl checksum..."
+                        curl --fail --silent --show-error --location \
+                            --connect-timeout 15 \
+                            --max-time 30 \
+                            --retry 2 \
+                            --retry-delay 5 \
+                            --output "$TMP_DIR/kubectl.sha256" \
+                            "${KUBECTL_URL}.sha256"
+
+                        echo "Verifying kubectl checksum..."
 
                         printf '%s  %s\n' \
                             "$(cat "$TMP_DIR/kubectl.sha256")" \
