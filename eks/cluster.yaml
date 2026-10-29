@@ -1,0 +1,31 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: bugtracker-eks
+  region: ap-south-1
+  version: "1.37"
+
+iam:
+  withOIDC: true
+
+vpc:
+  nat:
+    gateway: Disable
+  clusterEndpoints:
+    publicAccess: true
+    privateAccess: true
+  publicAccessCIDRs:
+    - "106.192.67.177/32"
+
+managedNodeGroups:
+  - name: bugtracker-ng
+    instanceType: t3.small
+    desiredCapacity: 1
+    minSize: 1
+    maxSize: 2
+    volumeSize: 20
+    privateNetworking: false
+    tags:
+      Project: BugTracker
+      Environment: lab

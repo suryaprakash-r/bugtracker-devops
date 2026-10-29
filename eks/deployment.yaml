@@ -1,0 +1,127 @@
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bugtracker
+  namespace: webapps
+  labels:
+    app: bugtracker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: bugtracker
+  template:
+    metadata:
+      labels:
+        app: bugtracker
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+
+      initContainers:
+        - name: prepare-storage
+          image: 626209129961.dkr.ecr.ap-south-1.amazonaws.com/bugtracker:build-7
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              mkdir -p /data/media
+              chmod 0770 /data /data/media
+              chown 1000:1000 /data /data/media
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "FOWNER"]
+          volumeMounts:
+            - name: bugtracker-data
+              mountPath: /data
+
+        - name: migrate-database
+          image: 626209129961.dkr.ecr.ap-south-1.amazonaws.com/bugtracker:build-7
+          imagePullPolicy: IfNotPresent
+          command: ["python", "manage.py", "migrate", "--noinput"]
+          env:
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bugtracker-secret
+                  key: SECRET_KEY
+            - name: DEBUG
+              value: "False"
+            - name: ALLOWED_HOSTS
+              value: "localhost,127.0.0.1,bugtracker,bugtracker.webapps.svc.cluster.local"
+            - name: DB_ENGINE
+              value: "sqlite"
+            - name: DB_NAME
+              value: "/data/db.sqlite3"
+          volumeMounts:
+            - name: bugtracker-data
+              mountPath: /data
+
+      containers:
+        - name: bugtracker
+          image: 626209129961.dkr.ecr.ap-south-1.amazonaws.com/bugtracker:build-7
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bugtracker-secret
+                  key: SECRET_KEY
+            - name: DEBUG
+              value: "False"
+            - name: ALLOWED_HOSTS
+              value: "localhost,127.0.0.1,bugtracker,bugtracker.webapps.svc.cluster.local"
+            - name: DB_ENGINE
+              value: "sqlite"
+            - name: DB_NAME
+              value: "/data/db.sqlite3"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          startupProbe:
+            tcpSocket:
+              port: 8000
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          volumeMounts:
+            - name: bugtracker-data
+              mountPath: /data
+            - name: bugtracker-data
+              mountPath: /app/media
+              subPath: media
+
+      volumes:
+        - name: bugtracker-data
+          persistentVolumeClaim:
+            claimName: bugtracker-data
