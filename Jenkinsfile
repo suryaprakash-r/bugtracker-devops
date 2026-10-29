@@ -99,11 +99,59 @@ pipeline {
             }
         }
 
+        stage('Push Image to Amazon ECR') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'aws-ecr-publisher',
+                    usernameVariable: 'AWS_ACCESS_KEY_ID',
+                    passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                )]) {
+                    sh '''#!/usr/bin/env bash
+                        set +x
+                        set -euo pipefail
+
+                        ECR_REGISTRY="626209129961.dkr.ecr.ap-south-1.amazonaws.com"
+                        ECR_IMAGE="${ECR_REGISTRY}/bugtracker:build-${BUILD_NUMBER}"
+
+                        # Clean up the login and the extra image tag,
+                        # even if publishing fails.
+                        trap '
+                            docker logout "$ECR_REGISTRY" >/dev/null 2>&1 || true
+                            docker image rm "$ECR_IMAGE" >/dev/null 2>&1 || true
+                        ' EXIT
+
+                        echo "Authenticating to Amazon ECR..."
+
+                        docker run --rm \
+                            -e AWS_ACCESS_KEY_ID \
+                            -e AWS_SECRET_ACCESS_KEY \
+                            -e AWS_DEFAULT_REGION=ap-south-1 \
+                            amazon/aws-cli:2 \
+                            ecr get-login-password --region ap-south-1 \
+                        | docker login \
+                            --username AWS \
+                            --password-stdin "$ECR_REGISTRY"
+
+                        echo "Tagging image for Amazon ECR..."
+                        docker tag \
+                            "bugtracker-ci:${BUILD_NUMBER}" \
+                            "$ECR_IMAGE"
+
+                        echo "Pushing image to Amazon ECR..."
+                        docker push "$ECR_IMAGE"
+
+                        echo "Successfully pushed: $ECR_IMAGE"
+                    '''
+                }
+            }
+        }
+
+
     }
 
     post {
         success {
-            echo 'SUCCESS: BugTracker image built, Django checks and tests passed.'
+            echo 'SUCCESS: BugTracker image built, Django checks and tests passed, and image pushed to Amazon ECR.'
         }
 
         failure {
