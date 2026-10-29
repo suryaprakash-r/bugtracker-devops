@@ -1,0 +1,51 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: bugtracker-alerts
+  namespace: monitoring
+  labels:
+    release: monitoring
+    app.kubernetes.io/part-of: bugtracker
+spec:
+  groups:
+    - name: bugtracker.availability
+      rules:
+        - alert: BugTrackerDeploymentUnavailable
+          expr: |
+            kube_deployment_status_replicas_available{namespace="webapps",deployment="bugtracker"} < 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: BugTracker has no available replicas
+            description: The BugTracker deployment in webapps has no available replicas for more than 2 minutes.
+
+        - alert: BugTrackerContainerRestarting
+          expr: |
+            sum by (pod) (increase(kube_pod_container_status_restarts_total{namespace="webapps",pod=~"bugtracker-.*"}[10m])) > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: BugTracker container restarted
+            description: A BugTracker pod has recorded a container restart in the last 10 minutes.
+
+        - alert: EKSNodeMemoryHigh
+          expr: |
+            100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 90
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: EKS node memory usage is high
+            description: Node memory utilization has exceeded 90 percent for more than 5 minutes.
+
+        - alert: MonitoringScrapeTargetDown
+          expr: |
+            up{namespace="monitoring"} == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: A monitoring target is down
+            description: A Prometheus target in the monitoring namespace has failed scraping for more than 5 minutes.
